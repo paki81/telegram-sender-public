@@ -1,0 +1,6 @@
+[
+  {
+    "type": "sqlite",
+    "path": "/var/www/html/telegram-sender/backend/messages.db"
+  }
+]
