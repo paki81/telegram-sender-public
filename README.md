@@ -53,16 +53,28 @@ Lo script di installazione:
 
 ### Configurazione
 
+#### Variabili d'ambiente
+
+Prima di avviare l'applicazione, configura le seguenti variabili d'ambiente:
+
+```bash
+# Configurazione del server
+PORT=3000                           # Porta su cui avviare il server (default: 3000)
+FRONTEND_URL=http://localhost:5173  # URL del frontend (default: http://localhost:5173)
+SECRET_KEY=your_secret_key         # Chiave segreta per i JWT (default: change_this_in_production)
+
+# Credenziali admin
+ADMIN_USERNAME=admin               # Username admin (default: admin)
+ADMIN_PASSWORD=your_secure_password # Password admin (default: change_this_in_production)
+
+# Server Configuration
+JWT_SECRET=il_tuo_secret_qui
+
+# Telegram Configuration
+DEFAULT_BOT_TOKEN=il_tuo_bot_token_qui
+```
+
 1. Modifica il file `backend/.env` con i tuoi parametri:
-   ```env
-   # Server Configuration
-   PORT=3000
-   JWT_SECRET=il_tuo_secret_qui
-
-   # Telegram Configuration
-   DEFAULT_BOT_TOKEN=il_tuo_bot_token_qui
-   ```
-
 2. Avvia l'applicazione:
    ```bash
    # Terminal 1 - Backend

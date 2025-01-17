@@ -297,7 +297,7 @@ function App() {
     if (!window.confirm("Sei sicuro di voler eliminare tutti i messaggi?")) return;
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_URL}/messages`, {
+      const response = await fetch(`${API_URL}/messages/all`, {
         method: "DELETE",
         headers: {
           "Authorization": `Bearer ${token}`
@@ -313,9 +313,13 @@ function App() {
       if (response.ok) {
         setCurrentPage(1);
         fetchMessages();
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Errore nell\'eliminazione dei messaggi');
       }
     } catch (error) {
       console.error("Errore nell'eliminazione:", error);
+      alert(`Errore nell'eliminazione dei messaggi: ${error.message}`);
     }
   };
 

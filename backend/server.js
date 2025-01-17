@@ -1,6 +1,3 @@
-// Load environment variables
-require('dotenv').config();
-
 const express = require('express');
 const bodyParser = require('body-parser');
 const TelegramBot = require('node-telegram-bot-api');
@@ -10,17 +7,15 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs').promises;
+const fs = require('fs').promises;  // Modifica qui per usare fs.promises
 const fsSync = require('fs');
 const cookieParser = require('cookie-parser');
 
-// Configuration
 const PORT = process.env.PORT || 3000;
-const SECRET_KEY = process.env.SECRET_KEY || 'telegram_sender_secret_key';
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+const SECRET_KEY = process.env.SECRET_KEY || 'change_this_in_production';
 
 const corsOptions = {
-  origin: FRONTEND_URL,
+  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
   methods: ['GET', 'POST', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
   exposedHeaders: ['Content-Type'],
@@ -29,22 +24,22 @@ const corsOptions = {
 };
 
 // Assicurati che la cartella uploads esista
-const uploadsDir = path.join(__dirname, process.env.UPLOAD_DIR || 'uploads');
+const uploadsDir = path.join(__dirname, 'uploads');
 if (!fsSync.existsSync(uploadsDir)) {
   fsSync.mkdirSync(uploadsDir, { recursive: true });
   console.log('Cartella uploads creata:', uploadsDir);
 }
 
 // Assicurati che la cartella databases esista
-const databasesDir = path.join(__dirname, process.env.DATABASES_DIR || 'databases');
+const databasesDir = path.join(__dirname, 'databases');
 if (!fsSync.existsSync(databasesDir)) {
   fsSync.mkdirSync(databasesDir, { recursive: true });
 }
 
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    console.log('Salvataggio file in:', path.join(__dirname, process.env.UPLOAD_DIR || 'uploads'));
-    cb(null, path.join(__dirname, process.env.UPLOAD_DIR || 'uploads'));
+    console.log('Salvataggio file in:', path.join(__dirname, 'uploads'));
+    cb(null, path.join(__dirname, 'uploads'));
   },
   filename: function (req, file, cb) {
     const timestamp = Date.now();
@@ -58,7 +53,7 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: process.env.MAX_FILE_SIZE || 50 * 1024 * 1024, // 50MB limite per file
+    fileSize: 50 * 1024 * 1024, // 50MB limite per file
     files: 10 // massimo 10 file per richiesta
   }
 });
@@ -239,13 +234,14 @@ const initializeTables = (db) => {
 const createAdminUser = (db) => {
   return new Promise(async (resolve, reject) => {
     try {
-      const adminPassword = 'admin';
+      const adminUsername = process.env.ADMIN_USERNAME || 'admin';
+      const adminPassword = process.env.ADMIN_PASSWORD || 'change_this_in_production';
       const hash = await bcrypt.hash(adminPassword, 10);
       
       db.run(`
         INSERT OR IGNORE INTO users (username, password, is_admin)
         VALUES (?, ?, 1)
-      `, ['admin', hash], (err) => {
+      `, [adminUsername, hash], (err) => {
         if (err) {
           console.error('Errore nella creazione dell\'utente admin:', err);
           reject(err);
@@ -265,7 +261,7 @@ const createAdminUser = (db) => {
 const initializeDatabase = () => {
   return new Promise((resolve, reject) => {
     console.log('Inizializzazione database...');
-    const dbPath = path.join(__dirname, process.env.DB_PATH || 'database.db');
+    const dbPath = path.join(__dirname, 'database.db');
     console.log('Percorso database:', dbPath);
     
     // Assicurati che la directory esista
@@ -538,25 +534,28 @@ app.get('/api/users', authenticateToken, async (req, res) => {
           LEFT JOIN user_configs uc ON u.id = uc.user_id
           LEFT JOIN telegram_configs tc ON uc.config_id = tc.id
         `, (err, rows) => {
-          if (err) reject(err);
-          else {
-            // Raggruppa i risultati per utente
-            const usersMap = rows.reduce((acc, row) => {
-              if (!acc[row.id]) {
-                acc[row.id] = {
-                  id: row.id,
-                  username: row.username,
-                  is_admin: row.is_admin,
-                  config: row.config_id ? {
-                    id: row.config_id,
-                    description: row.config_description || row.config_channel_id
-                  } : null
-                };
-              }
-              return acc;
-            }, {});
-            resolve(Object.values(usersMap));
+          if (err) {
+            console.error('Errore nel recupero degli utenti:', err);
+            reject(err);
+            return;
           }
+
+          // Raggruppa i risultati per utente
+          const usersMap = rows.reduce((acc, row) => {
+            if (!acc[row.id]) {
+              acc[row.id] = {
+                id: row.id,
+                username: row.username,
+                is_admin: row.is_admin,
+                config: row.config_id ? {
+                  id: row.config_id,
+                  description: row.config_description || row.config_channel_id
+                } : null
+              };
+            }
+            return acc;
+          }, {});
+          resolve(Object.values(usersMap));
         });
       });
       res.json(users);
@@ -629,7 +628,12 @@ function convertHtmlToTelegramFormat(html) {
 
 // Funzione per inviare messaggi su Telegram
 async function sendTelegramMessage(message, isSilent, files, config) {
-  console.log('Invio messaggio su Telegram:', { message, isSilent, files: files?.length });
+  console.log('=== INVIO MESSAGGIO TELEGRAM ===');
+  console.log('Config:', {
+    bot_token: config.bot_token ? '***' : 'mancante',
+    channel_id: config.channel_id
+  });
+  console.log('Files da inviare:', files?.length || 0);
 
   if (!config) {
     throw new Error('Configurazione Telegram non fornita');
@@ -641,23 +645,27 @@ async function sendTelegramMessage(message, isSilent, files, config) {
 
   // Invia prima il messaggio di testo
   if (message && message.trim() !== '') {
-    // Converti il messaggio HTML in formato Telegram
+    console.log('Invio testo del messaggio...');
     const formattedMessage = convertHtmlToTelegramFormat(message);
-    console.log('Messaggio formattato:', formattedMessage);
     
     const result = await bot.sendMessage(config.channel_id, formattedMessage, {
       disable_notification: isSilent,
       parse_mode: 'Markdown'
     });
     mainMessageId = result.message_id;
-    console.log('Messaggio di testo inviato:', result.message_id);
+    console.log('Messaggio di testo inviato con ID:', result.message_id);
   }
 
   // Invia gli allegati
   if (files && files.length > 0) {
+    console.log(`Invio ${files.length} allegati...`);
     for (const file of files) {
       try {
-        console.log('Invio file:', file.filename);
+        console.log('Invio file:', {
+          filename: file.filename,
+          originalname: file.originalname,
+          size: file.size
+        });
         const filePath = path.join(__dirname, 'uploads', file.filename);
         
         const result = await bot.sendDocument(config.channel_id, filePath, {
@@ -670,7 +678,7 @@ async function sendTelegramMessage(message, isSilent, files, config) {
           messageId: result.message_id
         });
         
-        console.log('File inviato:', {
+        console.log('File inviato con successo:', {
           filename: file.filename,
           messageId: result.message_id
         });
@@ -681,6 +689,10 @@ async function sendTelegramMessage(message, isSilent, files, config) {
     }
   }
 
+  console.log('=== RIEPILOGO INVIO ===');
+  console.log('ID messaggio principale:', mainMessageId);
+  console.log('ID allegati:', fileMessageIds);
+
   return {
     mainMessageId,
     fileMessageIds
@@ -689,9 +701,13 @@ async function sendTelegramMessage(message, isSilent, files, config) {
 
 // Endpoint per l'invio dei messaggi
 app.post('/api/messages', authenticateToken, upload.array('attachments'), async (req, res) => {
-  console.log('Ricevuta richiesta POST /api/messages');
+  console.log('=== NUOVO INVIO MESSAGGIO ===');
   console.log('Body:', req.body);
-  console.log('Files:', req.files);
+  console.log('Files:', req.files?.map(f => ({
+    filename: f.filename,
+    originalname: f.originalname,
+    size: f.size
+  })));
 
   const { message, silent } = req.body;
   const files = req.files || [];
@@ -716,6 +732,11 @@ app.post('/api/messages', authenticateToken, upload.array('attachments'), async 
       return res.status(400).json({ error: 'Nessuna configurazione Telegram attiva associata all\'utente' });
     }
 
+    console.log('Configurazione trovata:', {
+      config_id: userConfig.id,
+      channel_id: userConfig.channel_id
+    });
+
     // Salva il messaggio nel database con il config_id corretto
     const messageId = await new Promise((resolve, reject) => {
       db.run(
@@ -734,10 +755,9 @@ app.post('/api/messages', authenticateToken, upload.array('attachments'), async 
     for (const file of files) {
       try {
         console.log('Salvataggio allegato nel database:', {
+          messageId,
           filename: file.filename,
-          originalname: file.originalname,
-          mimetype: file.mimetype,
-          size: file.size
+          originalname: file.originalname
         });
 
         await new Promise((resolve, reject) => {
@@ -749,6 +769,7 @@ app.post('/api/messages', authenticateToken, upload.array('attachments'), async 
                 console.error('Errore nel salvataggio dell\'allegato nel database:', err);
                 reject(err);
               } else {
+                console.log('Allegato salvato nel database');
                 resolve();
               }
             }
@@ -761,15 +782,17 @@ app.post('/api/messages', authenticateToken, upload.array('attachments'), async 
 
     // Invia il messaggio su Telegram
     try {
+      console.log('Invio messaggio su Telegram...');
       const result = await sendTelegramMessage(message, silent === 'true', files, userConfig);
       console.log('Risultato invio Telegram:', result);
 
       // Aggiorna il messaggio principale con l'ID Telegram
       if (result.mainMessageId) {
+        console.log('Aggiorno ID Telegram del messaggio principale:', result.mainMessageId);
         await new Promise((resolve, reject) => {
           db.run(
             'UPDATE messages SET status = ?, telegram_message_id = ? WHERE id = ?',
-            ['sent', result.mainMessageId, messageId],
+            ['sent', result.mainMessageId.toString(), messageId],
             (err) => {
               if (err) reject(err);
               else resolve();
@@ -779,21 +802,22 @@ app.post('/api/messages', authenticateToken, upload.array('attachments'), async 
       }
 
       // Aggiorna gli allegati con gli ID dei messaggi Telegram
+      console.log('Aggiorno ID Telegram degli allegati:', result.fileMessageIds);
       for (const fileMessage of result.fileMessageIds) {
         await new Promise((resolve, reject) => {
-          db.run(
-            'UPDATE attachments SET telegram_message_id = ? WHERE message_id = ? AND filename = ?',
-            [fileMessage.messageId, messageId, fileMessage.filename],
-            (err) => {
-              if (err) {
-                console.error('Errore nell\'aggiornamento dell\'ID Telegram dell\'allegato:', err);
-                reject(err);
-              } else {
-                console.log('Aggiornato ID Telegram per allegato:', fileMessage);
-                resolve();
-              }
+          const query = 'UPDATE attachments SET telegram_message_id = ? WHERE message_id = ? AND filename = ?';
+          const params = [fileMessage.messageId.toString(), messageId, fileMessage.filename];
+          console.log('Query aggiornamento allegato:', { query, params });
+          
+          db.run(query, params, function(err) {
+            if (err) {
+              console.error('Errore nell\'aggiornamento dell\'ID Telegram dell\'allegato:', err);
+              reject(err);
+            } else {
+              console.log('Allegato aggiornato. Rows affected:', this.changes);
+              resolve();
             }
-          );
+          });
         });
       }
 
@@ -977,177 +1001,327 @@ app.get('/api/attachments/:filename', authenticateToken, async (req, res) => {
 
 // Funzione per eliminare un messaggio da Telegram
 const deleteTelegramMessage = async (bot_token, chat_id, message_id) => {
+  console.log('Tentativo eliminazione messaggio Telegram:', {
+    chat_id,
+    message_id
+  });
+  
   try {
     const bot = new TelegramBot(bot_token, { polling: false });
     await bot.deleteMessage(chat_id, message_id);
+    console.log('Messaggio Telegram eliminato con successo');
     return true;
   } catch (error) {
-    console.error('Errore nell\'eliminazione del messaggio da Telegram:', error);
+    console.error('Errore nell\'eliminazione del messaggio da Telegram:', error.message);
     return false;
   }
 };
+
+app.delete('/api/messages/all', authenticateToken, async (req, res) => {
+  const userId = req.user.userId;
+  const isAdmin = req.user.isAdmin;
+
+  console.log('=== ELIMINAZIONE TUTTI I MESSAGGI ===');
+  console.log('User ID:', userId);
+  console.log('Is Admin:', isAdmin);
+
+  try {
+    // Se non è admin, può eliminare solo i suoi messaggi
+    const whereClause = isAdmin ? '' : 'WHERE m.user_id = ?';
+    const params = isAdmin ? [] : [userId];
+
+    // Recupera tutti i messaggi con le relative configurazioni
+    const messages = await new Promise((resolve, reject) => {
+      const query = `
+        SELECT m.*, tc.bot_token, tc.channel_id
+        FROM messages m
+        JOIN telegram_configs tc ON m.config_id = tc.id
+        ${whereClause}
+      `;
+      
+      db.all(query, params, (err, rows) => {
+        if (err) {
+          console.error('Errore nel recupero dei messaggi:', err);
+          reject(err);
+        } else {
+          console.log('Messaggi trovati:', rows.length);
+          resolve(rows);
+        }
+      });
+    });
+
+    if (messages.length === 0) {
+      return res.json({ success: true, message: 'Nessun messaggio da eliminare' });
+    }
+
+    // Per ogni messaggio
+    for (const message of messages) {
+      try {
+        // Recupera gli allegati del messaggio
+        const attachments = await new Promise((resolve, reject) => {
+          const query = 'SELECT * FROM attachments WHERE message_id = ?';
+          
+          db.all(query, [message.id], (err, rows) => {
+            if (err) {
+              console.error('Errore nel recupero degli allegati:', err);
+              reject(err);
+            } else {
+              console.log(`Allegati trovati per il messaggio ${message.id}:`, rows.length);
+              resolve(rows);
+            }
+          });
+        });
+
+        const bot = new TelegramBot(message.bot_token, { polling: false });
+
+        // Elimina gli allegati
+        for (const attachment of attachments) {
+          // Elimina il file dal filesystem
+          try {
+            const filePath = path.join(__dirname, 'uploads', attachment.filename);
+            console.log('Tentativo eliminazione file:', filePath);
+            
+            try {
+              await fs.access(filePath);
+              await fs.unlink(filePath);
+              console.log('File eliminato dal filesystem:', filePath);
+            } catch (error) {
+              if (error.code === 'ENOENT') {
+                console.log('File non trovato:', filePath);
+              } else {
+                console.error('Errore accesso/eliminazione file:', error);
+              }
+            }
+          } catch (error) {
+            console.error('Errore generale eliminazione file:', error);
+          }
+
+          // Elimina il messaggio da Telegram
+          if (attachment.telegram_message_id) {
+            try {
+              console.log('Eliminazione allegato da Telegram:', {
+                channel_id: message.channel_id,
+                message_id: attachment.telegram_message_id
+              });
+              
+              await bot.deleteMessage(message.channel_id, parseInt(attachment.telegram_message_id));
+              console.log('Allegato eliminato da Telegram');
+            } catch (error) {
+              console.error('Errore eliminazione messaggio Telegram:', error.message);
+            }
+          }
+        }
+
+        // Elimina il messaggio principale da Telegram
+        if (message.telegram_message_id) {
+          try {
+            console.log('Eliminazione messaggio principale da Telegram:', {
+              channel_id: message.channel_id,
+              message_id: message.telegram_message_id
+            });
+            
+            await bot.deleteMessage(message.channel_id, parseInt(message.telegram_message_id));
+            console.log('Messaggio principale eliminato da Telegram');
+          } catch (error) {
+            console.error('Errore eliminazione messaggio principale:', error.message);
+          }
+        }
+
+        // Elimina gli allegati dal database
+        await new Promise((resolve, reject) => {
+          db.run('DELETE FROM attachments WHERE message_id = ?', [message.id], function(err) {
+            if (err) {
+              console.error('Errore eliminazione allegati dal database:', err);
+              reject(err);
+            } else {
+              console.log(`Allegati eliminati dal database per il messaggio ${message.id}. Righe:`, this.changes);
+              resolve();
+            }
+          });
+        });
+
+        // Elimina il messaggio dal database
+        await new Promise((resolve, reject) => {
+          db.run('DELETE FROM messages WHERE id = ?', [message.id], function(err) {
+            if (err) {
+              console.error('Errore eliminazione messaggio dal database:', err);
+              reject(err);
+            } else {
+              console.log(`Messaggio ${message.id} eliminato dal database. Righe:`, this.changes);
+              resolve();
+            }
+          });
+        });
+
+      } catch (error) {
+        console.error(`Errore nell'elaborazione del messaggio ${message.id}:`, error);
+      }
+    }
+
+    console.log('=== ELIMINAZIONE COMPLETATA ===');
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Errore generale:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 app.delete('/api/messages/:id', authenticateToken, async (req, res) => {
   const messageId = req.params.id;
   const userId = req.user.userId;
   const isAdmin = req.user.isAdmin;
 
+  console.log('=== ELIMINAZIONE MESSAGGIO ===');
+  console.log('Message ID:', messageId);
+  console.log('User ID:', userId);
+  console.log('Is Admin:', isAdmin);
+
   try {
-    // Recupera le informazioni del messaggio e della configurazione
-    const messageInfo = await new Promise((resolve, reject) => {
-      db.get(
-        `SELECT m.*, tc.bot_token, tc.channel_id, tc.description, m.telegram_message_id
-         FROM messages m
-         LEFT JOIN telegram_configs tc ON m.config_id = tc.id
-         WHERE m.id = ?`,
-        [messageId],
-        (err, row) => {
-          if (err) reject(err);
-          else resolve(row);
+    // Recupera il messaggio con le relative configurazioni
+    const message = await new Promise((resolve, reject) => {
+      const query = `
+        SELECT m.*, tc.bot_token, tc.channel_id
+        FROM messages m
+        JOIN telegram_configs tc ON m.config_id = tc.id
+        WHERE m.id = ? ${!isAdmin ? 'AND m.user_id = ?' : ''}
+      `;
+      
+      const params = isAdmin ? [messageId] : [messageId, userId];
+      
+      db.get(query, params, (err, row) => {
+        if (err) {
+          console.error('Errore nel recupero del messaggio:', err);
+          reject(err);
+        } else {
+          resolve(row);
         }
-      );
+      });
     });
 
-    if (!messageInfo) {
+    if (!message) {
       return res.status(404).json({ error: 'Messaggio non trovato' });
     }
 
-    // Verifica i permessi
-    if (!isAdmin && messageInfo.user_id !== userId) {
-      return res.status(403).json({ error: 'Non autorizzato' });
-    }
+    // Recupera gli allegati del messaggio
+    const attachments = await new Promise((resolve, reject) => {
+      const query = 'SELECT * FROM attachments WHERE message_id = ?';
+      
+      db.all(query, [messageId], (err, rows) => {
+        if (err) {
+          console.error('Errore nel recupero degli allegati:', err);
+          reject(err);
+        } else {
+          console.log('Allegati trovati:', rows.length);
+          resolve(rows);
+        }
+      });
+    });
 
-    // Se il messaggio ha un ID Telegram e una configurazione valida, prova a eliminarlo da Telegram
-    if (messageInfo.telegram_message_id && messageInfo.bot_token && messageInfo.channel_id) {
-      await deleteTelegramMessage(
-        messageInfo.bot_token,
-        messageInfo.channel_id,
-        messageInfo.telegram_message_id
-      );
-    }
+    const bot = new TelegramBot(message.bot_token, { polling: false });
 
     // Elimina gli allegati
+    for (const attachment of attachments) {
+      // Elimina il file dal filesystem
+      try {
+        const filePath = path.join(__dirname, 'uploads', attachment.filename);
+        console.log('Tentativo eliminazione file:', filePath);
+        
+        try {
+          await fs.access(filePath);
+          await fs.unlink(filePath);
+          console.log('File eliminato dal filesystem:', filePath);
+        } catch (error) {
+          if (error.code === 'ENOENT') {
+            console.log('File non trovato:', filePath);
+          } else {
+            console.error('Errore accesso/eliminazione file:', error);
+          }
+        }
+      } catch (error) {
+        console.error('Errore generale eliminazione file:', error);
+      }
+
+      // Elimina il messaggio da Telegram
+      if (attachment.telegram_message_id) {
+        try {
+          console.log('Eliminazione allegato da Telegram:', {
+            channel_id: message.channel_id,
+            message_id: attachment.telegram_message_id
+          });
+          
+          await bot.deleteMessage(message.channel_id, parseInt(attachment.telegram_message_id));
+          console.log('Allegato eliminato da Telegram');
+        } catch (error) {
+          console.error('Errore eliminazione messaggio Telegram:', error.message);
+        }
+      }
+    }
+
+    // Elimina il messaggio principale da Telegram
+    if (message.telegram_message_id) {
+      try {
+        console.log('Eliminazione messaggio principale da Telegram:', {
+          channel_id: message.channel_id,
+          message_id: message.telegram_message_id
+        });
+        
+        await bot.deleteMessage(message.channel_id, parseInt(message.telegram_message_id));
+        console.log('Messaggio principale eliminato da Telegram');
+      } catch (error) {
+        console.error('Errore eliminazione messaggio principale:', error.message);
+      }
+    }
+
+    // Elimina gli allegati dal database
     await new Promise((resolve, reject) => {
-      db.run('DELETE FROM attachments WHERE message_id = ?', [messageId], (err) => {
-        if (err) reject(err);
-        else resolve();
+      db.run('DELETE FROM attachments WHERE message_id = ?', [messageId], function(err) {
+        if (err) {
+          console.error('Errore eliminazione allegati dal database:', err);
+          reject(err);
+        } else {
+          console.log('Allegati eliminati dal database. Righe:', this.changes);
+          resolve();
+        }
       });
     });
 
     // Elimina il messaggio dal database
     await new Promise((resolve, reject) => {
-      db.run('DELETE FROM messages WHERE id = ?', [messageId], (err) => {
-        if (err) reject(err);
-        else resolve();
+      db.run('DELETE FROM messages WHERE id = ?', [messageId], function(err) {
+        if (err) {
+          console.error('Errore eliminazione messaggio dal database:', err);
+          reject(err);
+        } else {
+          console.log('Messaggio eliminato dal database. Righe:', this.changes);
+          resolve();
+        }
       });
     });
 
+    console.log('=== ELIMINAZIONE COMPLETATA ===');
     res.json({ success: true });
   } catch (error) {
-    console.error('Errore nell\'eliminazione del messaggio:', error);
-    res.status(500).json({ error: 'Errore nell\'eliminazione del messaggio' });
-  }
-});
-
-// Modifica anche l'endpoint per eliminare tutti i messaggi
-app.delete('/api/messages', authenticateToken, async (req, res) => {
-  const userId = req.user.userId;
-  const isAdmin = req.user.isAdmin;
-
-  try {
-    // Recupera tutti i messaggi da eliminare con le loro configurazioni
-    const messages = await new Promise((resolve, reject) => {
-      const query = isAdmin
-        ? `SELECT m.*, tc.bot_token, tc.channel_id 
-           FROM messages m
-           LEFT JOIN telegram_configs tc ON m.config_id = tc.id`
-        : `SELECT m.*, tc.bot_token, tc.channel_id 
-           FROM messages m
-           LEFT JOIN telegram_configs tc ON m.config_id = tc.id
-           WHERE m.user_id = ?`;
-      
-      db.all(query, isAdmin ? [] : [userId], (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows);
-      });
-    });
-
-    // Elimina ogni messaggio da Telegram
-    for (const message of messages) {
-      if (message.telegram_message_id && message.bot_token && message.channel_id) {
-        await deleteTelegramMessage(
-          message.bot_token,
-          message.channel_id,
-          message.telegram_message_id
-        );
-      }
-    }
-
-    // Elimina tutti gli allegati
-    await new Promise((resolve, reject) => {
-      const query = isAdmin
-        ? 'DELETE FROM attachments'
-        : 'DELETE FROM attachments WHERE message_id IN (SELECT id FROM messages WHERE user_id = ?)';
-      
-      db.run(query, isAdmin ? [] : [userId], (err) => {
-        if (err) reject(err);
-        else resolve();
-      });
-    });
-
-    // Elimina tutti i messaggi
-    await new Promise((resolve, reject) => {
-      const query = isAdmin
-        ? 'DELETE FROM messages'
-        : 'DELETE FROM messages WHERE user_id = ?';
-      
-      db.run(query, isAdmin ? [] : [userId], (err) => {
-        if (err) reject(err);
-        else resolve();
-      });
-    });
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Errore nell\'eliminazione dei messaggi:', error);
-    res.status(500).json({ error: 'Errore nell\'eliminazione dei messaggi' });
+    console.error('Errore generale:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
 app.get('/api/telegram-configs', authenticateToken, async (req, res) => {
   try {
-    const isAdmin = req.user.isAdmin;
-    const query = isAdmin
-      ? `SELECT 
-          id,
-          bot_token,
-          description,
-          channel_id,
-          is_active,
-          created_at,
-          CASE 
-            WHEN description IS NOT NULL AND description != '' 
-            THEN description 
-            ELSE channel_id 
-          END as display_name
-        FROM telegram_configs 
-        ORDER BY created_at DESC`
-      : `SELECT 
-          id,
-          description,
-          channel_id,
-          is_active,
-          created_at,
-          CASE 
-            WHEN description IS NOT NULL AND description != '' 
-            THEN description 
-            ELSE channel_id 
-          END as display_name
-        FROM telegram_configs 
-        ORDER BY created_at DESC`;
-
     const configs = await new Promise((resolve, reject) => {
-      db.all(query, (err, rows) => {
+      db.all(`
+        SELECT 
+          id,
+          description,
+          channel_id,
+          CASE 
+            WHEN description IS NOT NULL AND description != '' 
+            THEN description 
+            ELSE channel_id 
+          END as display_name
+        FROM telegram_configs 
+        ORDER BY created_at DESC
+      `, (err, rows) => {
         if (err) reject(err);
         else resolve(rows);
       });
@@ -1498,7 +1672,7 @@ app.get('/api/users', authenticateToken, async (req, res) => {
             const formattedUser = {
               id: row.id,
               username: row.username,
-              is_admin: row.is_admin === 1,
+              is_admin: row.is_admin,
               config: row.config_id ? {
                 id: row.config_id,
                 channel_id: row.channel_id,
@@ -1622,7 +1796,10 @@ app.get('/api/config', authenticateToken, async (req, res) => {
           [userId],
           (err, row) => {
             if (err) reject(err);
-            else resolve(row);
+            else {
+              console.log('Configurazione trovata:', row);
+              resolve(row);
+            }
           }
         );
       });
@@ -1641,7 +1818,10 @@ app.get('/api/config', authenticateToken, async (req, res) => {
         [],
         (err, row) => {
           if (err) reject(err);
-          else resolve(row);
+          else {
+            console.log('Configurazione trovata:', row);
+            resolve(row);
+          }
         }
       );
     });
@@ -1689,7 +1869,7 @@ app.delete('/api/messages/:id', authenticateToken, async (req, res) => {
         const bot = new TelegramBot(activeConfig.bot_token, { polling: false });
         await bot.deleteMessage(activeConfig.channel_id, message.telegram_message_id);
       } catch (error) {
-        console.error('Errore nell\'eliminazione del messaggio Telegram:', error);
+        console.error('Errore nell\'eliminazione del messaggio Telegram:', error.message);
       }
     }
 
@@ -1787,8 +1967,8 @@ app.delete('/api/messages', authenticateToken, async (req, res) => {
     // Elimina i file degli allegati
     for (const attachment of attachments) {
       try {
-        const filePath = path.join(uploadsDir, attachment.filename);
-        await fs.unlink(filePath);
+        const filePath = path.join(__dirname, 'uploads', attachment.filename);
+        await fs.promises.unlink(filePath);
         console.log('File eliminato:', filePath);
       } catch (error) {
         if (error.code !== 'ENOENT') {
@@ -2037,6 +2217,155 @@ app.patch('/api/telegram-configs/:id/toggle', authenticateToken, requireAdmin, a
   } catch (error) {
     console.error('Errore:', error);
     res.status(500).json({ error: 'Errore nell\'attivare/disattivare la configurazione' });
+  }
+});
+
+app.delete('/api/messages/all', authenticateToken, async (req, res) => {
+  const userId = req.user.userId;
+  const isAdmin = req.user.isAdmin;
+
+  console.log('=== ELIMINAZIONE TUTTI I MESSAGGI ===');
+  console.log('User ID:', userId);
+  console.log('Is Admin:', isAdmin);
+
+  try {
+    // Se non è admin, può eliminare solo i suoi messaggi
+    const whereClause = isAdmin ? '' : 'WHERE m.user_id = ?';
+    const params = isAdmin ? [] : [userId];
+
+    // Recupera tutti i messaggi con le relative configurazioni
+    const messages = await new Promise((resolve, reject) => {
+      const query = `
+        SELECT m.*, tc.bot_token, tc.channel_id
+        FROM messages m
+        JOIN telegram_configs tc ON m.config_id = tc.id
+        ${whereClause}
+      `;
+      
+      db.all(query, params, (err, rows) => {
+        if (err) {
+          console.error('Errore nel recupero dei messaggi:', err);
+          reject(err);
+        } else {
+          console.log('Messaggi trovati:', rows.length);
+          resolve(rows);
+        }
+      });
+    });
+
+    if (messages.length === 0) {
+      return res.json({ success: true, message: 'Nessun messaggio da eliminare' });
+    }
+
+    // Per ogni messaggio
+    for (const message of messages) {
+      try {
+        // Recupera gli allegati del messaggio
+        const attachments = await new Promise((resolve, reject) => {
+          const query = 'SELECT * FROM attachments WHERE message_id = ?';
+          
+          db.all(query, [message.id], (err, rows) => {
+            if (err) {
+              console.error('Errore nel recupero degli allegati:', err);
+              reject(err);
+            } else {
+              console.log(`Allegati trovati per il messaggio ${message.id}:`, rows.length);
+              resolve(rows);
+            }
+          });
+        });
+
+        const bot = new TelegramBot(message.bot_token, { polling: false });
+
+        // Elimina gli allegati
+        for (const attachment of attachments) {
+          // Elimina il file dal filesystem
+          try {
+            const filePath = path.join(__dirname, 'uploads', attachment.filename);
+            console.log('Tentativo eliminazione file:', filePath);
+            
+            try {
+              await fs.access(filePath);
+              await fs.unlink(filePath);
+              console.log('File eliminato dal filesystem:', filePath);
+            } catch (error) {
+              if (error.code === 'ENOENT') {
+                console.log('File non trovato:', filePath);
+              } else {
+                console.error('Errore accesso/eliminazione file:', error);
+              }
+            }
+          } catch (error) {
+            console.error('Errore generale eliminazione file:', error);
+          }
+
+          // Elimina il messaggio da Telegram
+          if (attachment.telegram_message_id) {
+            try {
+              console.log('Eliminazione allegato da Telegram:', {
+                channel_id: message.channel_id,
+                message_id: attachment.telegram_message_id
+              });
+              
+              await bot.deleteMessage(message.channel_id, parseInt(attachment.telegram_message_id));
+              console.log('Allegato eliminato da Telegram');
+            } catch (error) {
+              console.error('Errore eliminazione messaggio Telegram:', error.message);
+            }
+          }
+        }
+
+        // Elimina il messaggio principale da Telegram
+        if (message.telegram_message_id) {
+          try {
+            console.log('Eliminazione messaggio principale da Telegram:', {
+              channel_id: message.channel_id,
+              message_id: message.telegram_message_id
+            });
+            
+            await bot.deleteMessage(message.channel_id, parseInt(message.telegram_message_id));
+            console.log('Messaggio principale eliminato da Telegram');
+          } catch (error) {
+            console.error('Errore eliminazione messaggio principale:', error.message);
+          }
+        }
+
+        // Elimina gli allegati dal database
+        await new Promise((resolve, reject) => {
+          db.run('DELETE FROM attachments WHERE message_id = ?', [message.id], function(err) {
+            if (err) {
+              console.error('Errore eliminazione allegati dal database:', err);
+              reject(err);
+            } else {
+              console.log(`Allegati eliminati dal database per il messaggio ${message.id}. Righe:`, this.changes);
+              resolve();
+            }
+          });
+        });
+
+        // Elimina il messaggio dal database
+        await new Promise((resolve, reject) => {
+          db.run('DELETE FROM messages WHERE id = ?', [message.id], function(err) {
+            if (err) {
+              console.error('Errore eliminazione messaggio dal database:', err);
+              reject(err);
+            } else {
+              console.log(`Messaggio ${message.id} eliminato dal database. Righe:`, this.changes);
+              resolve();
+            }
+          });
+        });
+
+      } catch (error) {
+        console.error(`Errore nell'elaborazione del messaggio ${message.id}:`, error);
+      }
+    }
+
+    console.log('=== ELIMINAZIONE COMPLETATA ===');
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Errore generale:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
